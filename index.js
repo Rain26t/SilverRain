@@ -25,6 +25,14 @@ if (!TOKEN) {
   throw new Error("Missing DISCORD_TOKEN environment variable.");
 }
 
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled promise rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+});
+
 let player = createAudioPlayer();
 let currentResource = null;
 
@@ -98,10 +106,11 @@ client.on('guildMemberAdd', async (member) => {
 });
 
 client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
+  try {
+    if (message.author.bot || !message.guild) return;
 
   // 🎵 PLAY COMMAND
-  if (message.content.startsWith("!play")) {
+    if (message.content.startsWith("!play")) {
     try {
       const query = message.content.replace("!play", "").trim();
 
@@ -136,27 +145,32 @@ client.on('messageCreate', async (message) => {
       console.error('Play command failed:', error.message);
       message.reply(`Could not play that track: ${error.message}`);
     }
-  }
-
-  // 🔊 VOLUME COMMAND
-  if (message.content.startsWith("!volume")) {
-    if (!currentResource) {
-      return message.reply("Nothing is playing.");
     }
 
-    const vol = parseFloat(message.content.split(" ")[1]);
+    // 🔊 VOLUME COMMAND
+    if (message.content.startsWith("!volume")) {
+      if (!currentResource) {
+        return message.reply("Nothing is playing.");
+      }
 
-    if (isNaN(vol) || vol < 0 || vol > 5) {
-      return message.reply("Enter volume between 0 and 5");
+      const vol = parseFloat(message.content.split(" ")[1]);
+
+      if (isNaN(vol) || vol < 0 || vol > 5) {
+        return message.reply("Enter volume between 0 and 5");
+      }
+
+      currentResource.volume.setVolume(vol);
+
+      message.reply(`Volume set to ${vol * 100}%`);
     }
-
-    currentResource.volume.setVolume(vol);
-
-    message.reply(`Volume set to ${vol * 100}%`);
+  } catch (error) {
+    console.error('messageCreate handler error:', error);
   }
 });
 
-client.login(TOKEN);
+client.login(TOKEN).catch((error) => {
+  console.error('Discord login failed:', error.message);
+});
 
 
 
