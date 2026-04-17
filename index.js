@@ -1,4 +1,5 @@
 const path = require('path');
+const { spawn } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
@@ -6,7 +7,8 @@ const {
   joinVoiceChannel, 
   createAudioPlayer, 
   createAudioResource, 
-  AudioPlayerStatus 
+  AudioPlayerStatus,
+  StreamType,
 } = require('@discordjs/voice');
 const play = require('play-dl');
 
@@ -60,37 +62,94 @@ player.on('error', (error) => {
 });
 
 async function resolveTrack(query) {
-  const validation = play.yt_validate(query);
+  const isSoundCloudUrl = /soundcloud\.com/i.test(query);
 
-  if (validation === 'video') {
-    const info = await play.video_basic_info(query);
-    return {
-      source: 'youtube',
-      info,
-      title: info.video_details.title,
-    };
-  }
-
-  const youtubeResults = await play.search(query, { limit: 1, source: { youtube: 'video' } });
-  if (youtubeResults.length) {
-    const info = await play.video_basic_info(youtubeResults[0].url);
-    return {
-      source: 'youtube',
-      info,
-      title: youtubeResults[0].title || info.video_details.title,
-    };
-  }
-
-  const soundcloudResults = await play.search(query, { limit: 1, source: { soundcloud: 'tracks' } });
-  if (soundcloudResults.length) {
+  if (isSoundCloudUrl) {
+    const soundcloudTrack = await play.soundcloud(query);
     return {
       source: 'soundcloud',
-      url: soundcloudResults[0].url,
-      title: soundcloudResults[0].title,
+      url: query,
+      title: soundcloudTrack.title,
     };
   }
 
-  throw new Error('No song found for your query.');
+  const target = play.yt_validate(query) === 'video' || query.startsWith('http')
+    ? query
+    : `ytsearch1:${query}`;
+
+  const info = await runYtDlpJson(target);
+  const normalized = info.entries?.[0] ?? info;
+
+  return {
+    source: 'youtube',
+    target,
+    title: normalized.title || 'YouTube track',
+  };
+}
+
+function runYtDlpJson(target) {
+  return new Promise((resolve, reject) => {
+    const ytDlp = spawn('yt-dlp', [
+      '--no-playlist',
+      '--skip-download',
+      '--dump-single-json',
+      '--no-warnings',
+      '--quiet',
+      target,
+    ]);
+
+    let stdout = '';
+    let stderr = '';
+
+    ytDlp.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    ytDlp.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    ytDlp.on('error', (error) => {
+      reject(new Error(`yt-dlp is not available: ${error.message}`));
+    });
+
+    ytDlp.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(stdout));
+      } catch (error) {
+        reject(new Error(`Could not parse yt-dlp output: ${error.message}`));
+      }
+    });
+  });
+}
+
+function runYtDlpStream(target) {
+  const ytDlp = spawn('yt-dlp', [
+    '--no-playlist',
+    '--no-warnings',
+    '--quiet',
+    '-f', 'bestaudio[ext=webm]/bestaudio/best',
+    '-o', '-',
+    target,
+  ]);
+
+  ytDlp.on('error', (error) => {
+    console.error('yt-dlp stream error:', error.message);
+  });
+
+  ytDlp.stderr.on('data', (chunk) => {
+    const output = chunk.toString().trim();
+    if (output) {
+      console.error('yt-dlp:', output);
+    }
+  });
+
+  return ytDlp;
 }
 
 client.on('ready', () => {
@@ -169,18 +228,20 @@ client.on('messageCreate', async (message) => {
 
       let stream;
       if (track.source === 'youtube') {
-        stream = await play.stream_from_info(track.info, {
-          discordPlayerCompatibility: true,
+        const ytDlpProcess = runYtDlpStream(track.target);
+        stream = createAudioResource(ytDlpProcess.stdout, {
+          inputType: StreamType.Arbitrary,
+          inlineVolume: true,
         });
       } else {
-        stream = await play.stream(track.url);
+        const soundcloudStream = await play.stream(track.url);
+        stream = createAudioResource(soundcloudStream.stream, {
+          inputType: soundcloudStream.type,
+          inlineVolume: true,
+        });
       }
 
-      currentResource = createAudioResource(stream.stream, {
-        inputType: stream.type,
-        inlineVolume: true
-      });
-
+      currentResource = stream;
       currentResource.volume.setVolume(1);
       player.play(currentResource);
       connection.subscribe(player);
