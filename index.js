@@ -55,6 +55,21 @@ process.on('uncaughtException', (error) => {
 
 let player = createAudioPlayer();
 let currentResource = null;
+let soundCloudReady = false;
+
+async function ensureSoundCloudReady() {
+  if (soundCloudReady) {
+    return;
+  }
+
+  const clientId = await play.getFreeClientID();
+  play.setToken({
+    soundcloud: {
+      client_id: clientId,
+    },
+  });
+  soundCloudReady = true;
+}
 
 player.on(AudioPlayerStatus.Idle, () => {
   currentResource = null;
@@ -91,6 +106,8 @@ async function resolveTrack(query) {
 }
 
 async function resolveSoundCloudFallback(query) {
+  await ensureSoundCloudReady();
+
   const results = await play.search(query, {
     limit: 1,
     source: { soundcloud: 'tracks' },
@@ -276,7 +293,16 @@ client.on('messageCreate', async (message) => {
         const isYouTubeBlocked = /YouTube blocked this server IP/i.test(error.message);
 
         if (!isUrl && isYouTubeBlocked) {
-          track = await resolveSoundCloudFallback(query);
+          try {
+            track = await resolveSoundCloudFallback(query);
+          } catch (fallbackError) {
+            if (/client_id/i.test(fallbackError.message)) {
+              soundCloudReady = false;
+              track = await resolveSoundCloudFallback(query);
+            } else {
+              throw fallbackError;
+            }
+          }
           await message.reply('YouTube blocked this VPS IP. Trying SoundCloud fallback.');
         } else {
           throw error;
