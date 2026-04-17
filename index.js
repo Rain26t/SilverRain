@@ -10,14 +10,25 @@ const {
 } = require('@discordjs/voice');
 const play = require('play-dl');
 
+const ENABLE_WELCOME = process.env.ENABLE_WELCOME === 'true';
+const ENABLE_MESSAGE_CONTENT = process.env.ENABLE_MESSAGE_CONTENT !== 'false';
+
+const intents = [
+  GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.GuildVoiceStates,
+];
+
+if (ENABLE_WELCOME) {
+  intents.push(GatewayIntentBits.GuildMembers);
+}
+
+if (ENABLE_MESSAGE_CONTENT) {
+  intents.push(GatewayIntentBits.MessageContent);
+}
+
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates
-  ]
+  intents,
 });
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -72,9 +83,16 @@ async function resolveTrack(query) {
 
 client.on('ready', () => {
   console.log("Music bot with volume is online!");
+  if (!ENABLE_WELCOME) {
+    console.log('Welcome messages are disabled. Set ENABLE_WELCOME=true to enable.');
+  }
+  if (!ENABLE_MESSAGE_CONTENT) {
+    console.log('Message content intent is disabled. Prefix commands will not work.');
+  }
 });
 
-client.on('guildMemberAdd', async (member) => {
+if (ENABLE_WELCOME) {
+  client.on('guildMemberAdd', async (member) => {
   try {
     const me = member.guild.members.me;
     const systemChannel = member.guild.systemChannel;
@@ -107,7 +125,8 @@ client.on('guildMemberAdd', async (member) => {
   } catch (error) {
     console.error('Welcome message failed:', error.message);
   }
-});
+  });
+}
 
 client.on('messageCreate', async (message) => {
   try {
@@ -174,6 +193,13 @@ client.on('messageCreate', async (message) => {
 
 client.login(TOKEN).catch((error) => {
   console.error('Discord login failed:', error.message);
+  if (error.code === 'TokenInvalid') {
+    console.error('DISCORD_TOKEN is invalid. Generate a new token in Discord Developer Portal.');
+  }
+  if (/disallowed intents/i.test(error.message)) {
+    console.error('Enable required intents in Discord Developer Portal or disable flags in .env.');
+  }
+  process.exit(1);
 });
 
 
