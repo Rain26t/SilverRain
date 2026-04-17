@@ -90,6 +90,23 @@ async function resolveTrack(query) {
   };
 }
 
+async function resolveSoundCloudFallback(query) {
+  const results = await play.search(query, {
+    limit: 1,
+    source: { soundcloud: 'tracks' },
+  });
+
+  if (!results.length) {
+    throw new Error('No SoundCloud fallback result found for your query.');
+  }
+
+  return {
+    source: 'soundcloud',
+    url: results[0].url,
+    title: results[0].title || 'SoundCloud track',
+  };
+}
+
 function runYtDlpJson(target) {
   return new Promise((resolve, reject) => {
     const ytDlp = spawn('yt-dlp', [
@@ -251,7 +268,20 @@ client.on('messageCreate', async (message) => {
         selfMute: false,
       });
 
-      const track = await resolveTrack(query);
+      let track;
+      try {
+        track = await resolveTrack(query);
+      } catch (error) {
+        const isUrl = query.startsWith('http');
+        const isYouTubeBlocked = /YouTube blocked this server IP/i.test(error.message);
+
+        if (!isUrl && isYouTubeBlocked) {
+          track = await resolveSoundCloudFallback(query);
+          await message.reply('YouTube blocked this VPS IP. Trying SoundCloud fallback.');
+        } else {
+          throw error;
+        }
+      }
 
       let stream;
       if (track.source === 'youtube') {
