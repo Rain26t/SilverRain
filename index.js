@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -14,6 +15,8 @@ const play = require('play-dl');
 
 const ENABLE_WELCOME = process.env.ENABLE_WELCOME === 'true';
 const ENABLE_MESSAGE_CONTENT = process.env.ENABLE_MESSAGE_CONTENT !== 'false';
+const YTDLP_COOKIES_PATH = process.env.YTDLP_COOKIES_PATH || '';
+const YTDLP_USER_AGENT = process.env.YTDLP_USER_AGENT || '';
 
 const intents = [
   GatewayIntentBits.Guilds,
@@ -95,6 +98,7 @@ function runYtDlpJson(target) {
       '--dump-single-json',
       '--no-warnings',
       '--quiet',
+      ...buildYtDlpCommonArgs(),
       target,
     ]);
 
@@ -115,7 +119,13 @@ function runYtDlpJson(target) {
 
     ytDlp.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(stderr.trim() || `yt-dlp exited with code ${code}`));
+        const errorText = stderr.trim() || `yt-dlp exited with code ${code}`;
+        if (/sign in to confirm you\u2019re not a bot|sign in to confirm you're not a bot/i.test(errorText)) {
+          reject(new Error('YouTube blocked this server IP. Configure YTDLP_COOKIES_PATH with exported YouTube cookies.'));
+          return;
+        }
+
+        reject(new Error(errorText));
         return;
       }
 
@@ -133,6 +143,7 @@ function runYtDlpStream(target) {
     '--no-playlist',
     '--no-warnings',
     '--quiet',
+    ...buildYtDlpCommonArgs(),
     '-f', 'bestaudio[ext=webm]/bestaudio/best',
     '-o', '-',
     target,
@@ -150,6 +161,22 @@ function runYtDlpStream(target) {
   });
 
   return ytDlp;
+}
+
+function buildYtDlpCommonArgs() {
+  const args = [
+    '--extractor-args', 'youtube:player_client=android',
+  ];
+
+  if (YTDLP_COOKIES_PATH && fs.existsSync(YTDLP_COOKIES_PATH)) {
+    args.push('--cookies', YTDLP_COOKIES_PATH);
+  }
+
+  if (YTDLP_USER_AGENT) {
+    args.push('--user-agent', YTDLP_USER_AGENT);
+  }
+
+  return args;
 }
 
 client.on('ready', () => {
