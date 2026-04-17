@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
 const { 
@@ -22,7 +23,10 @@ const client = new Client({
 const TOKEN = process.env.DISCORD_TOKEN;
 
 if (!TOKEN) {
-  throw new Error("Missing DISCORD_TOKEN environment variable.");
+  console.error('Missing DISCORD_TOKEN environment variable.');
+  console.error(`Checked .env at: ${path.join(__dirname, '.env')}`);
+  console.error(`Current working directory: ${process.cwd()}`);
+  process.exit(1);
 }
 
 process.on('unhandledRejection', (error) => {
