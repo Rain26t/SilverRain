@@ -1,4 +1,6 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+require('dotenv').config();
+
+const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
 const { 
   joinVoiceChannel, 
   createAudioPlayer, 
@@ -10,6 +12,7 @@ const play = require('play-dl');
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates
@@ -25,8 +28,73 @@ if (!TOKEN) {
 let player = createAudioPlayer();
 let currentResource = null;
 
+player.on(AudioPlayerStatus.Idle, () => {
+  currentResource = null;
+});
+
+player.on('error', (error) => {
+  console.error('Audio player error:', error.message);
+});
+
+async function resolveTrack(query) {
+  const validation = play.yt_validate(query);
+
+  if (validation === 'video') {
+    const info = await play.video_info(query);
+    return {
+      url: query,
+      title: info.video_details.title,
+    };
+  }
+
+  const results = await play.search(query, { limit: 1 });
+  if (!results.length) {
+    throw new Error('No song found for your query.');
+  }
+
+  return {
+    url: results[0].url,
+    title: results[0].title,
+  };
+}
+
 client.on('ready', () => {
   console.log("Music bot with volume is online!");
+});
+
+client.on('guildMemberAdd', async (member) => {
+  try {
+    const me = member.guild.members.me;
+    const systemChannel = member.guild.systemChannel;
+    const canUseSystemChannel =
+      systemChannel &&
+      me &&
+      systemChannel.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages);
+
+    const fallbackChannel = member.guild.channels.cache.find((channel) => {
+      if (!channel.isTextBased() || channel.isDMBased()) {
+        return false;
+      }
+
+      return (
+        /(welcome|general)/i.test(channel.name) &&
+        me &&
+        channel.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages)
+      );
+    });
+
+    const targetChannel = canUseSystemChannel ? systemChannel : fallbackChannel;
+    const welcomeMessage = `Welcome ${member} to **${member.guild.name}**!`;
+
+    if (targetChannel) {
+      await targetChannel.send(welcomeMessage);
+      return;
+    }
+
+    await member.send(`Welcome to ${member.guild.name}!`);
+  } catch (error) {
+    console.error('Welcome message failed:', error.message);
+  }
 });
 
 client.on('messageCreate', async (message) => {
@@ -34,31 +102,40 @@ client.on('messageCreate', async (message) => {
 
   // 🎵 PLAY COMMAND
   if (message.content.startsWith("!play")) {
-    const query = message.content.replace("!play", "").trim();
+    try {
+      const query = message.content.replace("!play", "").trim();
 
-    if (!message.member.voice.channel) {
-      return message.reply("Join a voice channel first!");
+      if (!query) {
+        return message.reply("Usage: !play <song name or YouTube URL>");
+      }
+
+      if (!message.member.voice.channel) {
+        return message.reply("Join a voice channel first!");
+      }
+
+      const connection = joinVoiceChannel({
+        channelId: message.member.voice.channel.id,
+        guildId: message.guild.id,
+        adapterCreator: message.guild.voiceAdapterCreator,
+      });
+
+      const track = await resolveTrack(query);
+      const stream = await play.stream(track.url);
+
+      currentResource = createAudioResource(stream.stream, {
+        inputType: stream.type,
+        inlineVolume: true
+      });
+
+      currentResource.volume.setVolume(1);
+      player.play(currentResource);
+      connection.subscribe(player);
+
+      message.reply(`Playing: ${track.title}`);
+    } catch (error) {
+      console.error('Play command failed:', error.message);
+      message.reply(`Could not play that track: ${error.message}`);
     }
-
-    const connection = joinVoiceChannel({
-      channelId: message.member.voice.channel.id,
-      guildId: message.guild.id,
-      adapterCreator: message.guild.voiceAdapterCreator,
-    });
-
-    const stream = await play.stream(query);
-
-    currentResource = createAudioResource(stream.stream, {
-      inputType: stream.type,
-      inlineVolume: true   // 🔥 REQUIRED FOR VOLUME
-    });
-
-    currentResource.volume.setVolume(1); // default 100%
-
-    player.play(currentResource);
-    connection.subscribe(player);
-
-    message.reply(`Playing: ${query}`);
   }
 
   // 🔊 VOLUME COMMAND
