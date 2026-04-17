@@ -20,6 +20,7 @@ const ENABLE_WELCOME = process.env.ENABLE_WELCOME === 'true';
 const ENABLE_MESSAGE_CONTENT = process.env.ENABLE_MESSAGE_CONTENT !== 'false';
 const YTDLP_COOKIES_PATH = process.env.YTDLP_COOKIES_PATH || '';
 const YTDLP_USER_AGENT = process.env.YTDLP_USER_AGENT || '';
+const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID || '';
 
 const intents = [
   GatewayIntentBits.Guilds,
@@ -216,6 +217,61 @@ function buildYtDlpCommonArgs() {
   return args;
 }
 
+function getWelcomeChannel(guild) {
+  const me = guild.members.me;
+
+  if (WELCOME_CHANNEL_ID) {
+    const channel = guild.channels.cache.get(WELCOME_CHANNEL_ID);
+    if (
+      channel &&
+      channel.isTextBased() &&
+      !channel.isDMBased() &&
+      me &&
+      channel.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages)
+    ) {
+      return channel;
+    }
+  }
+
+  const systemChannel = guild.systemChannel;
+  const canUseSystemChannel =
+    systemChannel &&
+    me &&
+    systemChannel.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages);
+
+  if (canUseSystemChannel) {
+    return systemChannel;
+  }
+
+  return guild.channels.cache.find((channel) => {
+    if (!channel.isTextBased() || channel.isDMBased()) {
+      return false;
+    }
+
+    return (
+      /(welcome|general)/i.test(channel.name) &&
+      me &&
+      channel.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages)
+    );
+  });
+}
+
+async function sendWelcomeMessage(member, isTest = false) {
+  const targetChannel = getWelcomeChannel(member.guild);
+  const content = isTest
+    ? `Welcome test: SilverRain can send welcome messages for ${member}.`
+    : `Welcome ${member} to **${member.guild.name}**!`;
+
+  if (targetChannel) {
+    await targetChannel.send(content);
+    return;
+  }
+
+  if (!isTest) {
+    await member.send(`Welcome to ${member.guild.name}!`);
+  }
+}
+
 client.on('ready', () => {
   console.log("Music bot with volume is online!");
   if (!ENABLE_WELCOME) {
@@ -229,34 +285,7 @@ client.on('ready', () => {
 if (ENABLE_WELCOME) {
   client.on('guildMemberAdd', async (member) => {
   try {
-    const me = member.guild.members.me;
-    const systemChannel = member.guild.systemChannel;
-    const canUseSystemChannel =
-      systemChannel &&
-      me &&
-      systemChannel.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages);
-
-    const fallbackChannel = member.guild.channels.cache.find((channel) => {
-      if (!channel.isTextBased() || channel.isDMBased()) {
-        return false;
-      }
-
-      return (
-        /(welcome|general)/i.test(channel.name) &&
-        me &&
-        channel.permissionsFor(me).has(PermissionsBitField.Flags.SendMessages)
-      );
-    });
-
-    const targetChannel = canUseSystemChannel ? systemChannel : fallbackChannel;
-    const welcomeMessage = `Welcome ${member} to **${member.guild.name}**!`;
-
-    if (targetChannel) {
-      await targetChannel.send(welcomeMessage);
-      return;
-    }
-
-    await member.send(`Welcome to ${member.guild.name}!`);
+    await sendWelcomeMessage(member);
   } catch (error) {
     console.error('Welcome message failed:', error.message);
   }
@@ -364,6 +393,15 @@ client.on('messageCreate', async (message) => {
       currentResource.volume.setVolume(vol);
 
       message.reply(`Volume set to ${vol * 100}%`);
+    }
+
+    if (message.content === '!testwelcome') {
+      if (!ENABLE_WELCOME) {
+        return message.reply('Welcome feature is disabled. Set ENABLE_WELCOME=true and restart.');
+      }
+
+      await sendWelcomeMessage(message.member, true);
+      return message.reply('Welcome test sent.');
     }
   } catch (error) {
     console.error('messageCreate handler error:', error);
