@@ -10,6 +10,9 @@ const {
   createAudioResource, 
   AudioPlayerStatus,
   StreamType,
+  VoiceConnectionStatus,
+  entersState,
+  demuxProbe,
 } = require('@discordjs/voice');
 const play = require('play-dl');
 
@@ -285,6 +288,8 @@ client.on('messageCreate', async (message) => {
         selfMute: false,
       });
 
+      await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+
       let track;
       try {
         track = await resolveTrack(query);
@@ -309,22 +314,30 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      let stream;
+      let audioSource;
       if (track.source === 'youtube') {
         const ytDlpProcess = runYtDlpStream(track.target);
-        stream = createAudioResource(ytDlpProcess.stdout, {
-          inputType: StreamType.Arbitrary,
-          inlineVolume: true,
-        });
+        audioSource = ytDlpProcess.stdout;
       } else {
         const soundcloudStream = await play.stream(track.url);
-        stream = createAudioResource(soundcloudStream.stream, {
-          inputType: soundcloudStream.type,
-          inlineVolume: true,
-        });
+        audioSource = soundcloudStream.stream;
       }
 
-      currentResource = stream;
+      let resourceInput = audioSource;
+      let resourceType = StreamType.Arbitrary;
+
+      try {
+        const probed = await demuxProbe(audioSource);
+        resourceInput = probed.stream;
+        resourceType = probed.type;
+      } catch (probeError) {
+        console.warn('demuxProbe fallback to arbitrary stream:', probeError.message);
+      }
+
+      currentResource = createAudioResource(resourceInput, {
+        inputType: resourceType,
+        inlineVolume: true,
+      });
       currentResource.volume.setVolume(1);
       player.play(currentResource);
       connection.subscribe(player);
