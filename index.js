@@ -63,22 +63,34 @@ async function resolveTrack(query) {
   const validation = play.yt_validate(query);
 
   if (validation === 'video') {
-    const info = await play.video_info(query);
+    const info = await play.video_basic_info(query);
     return {
-      url: query,
+      source: 'youtube',
+      info,
       title: info.video_details.title,
     };
   }
 
-  const results = await play.search(query, { limit: 1 });
-  if (!results.length) {
-    throw new Error('No song found for your query.');
+  const youtubeResults = await play.search(query, { limit: 1, source: { youtube: 'video' } });
+  if (youtubeResults.length) {
+    const info = await play.video_basic_info(youtubeResults[0].url);
+    return {
+      source: 'youtube',
+      info,
+      title: youtubeResults[0].title || info.video_details.title,
+    };
   }
 
-  return {
-    url: results[0].url,
-    title: results[0].title,
-  };
+  const soundcloudResults = await play.search(query, { limit: 1, source: { soundcloud: 'tracks' } });
+  if (soundcloudResults.length) {
+    return {
+      source: 'soundcloud',
+      url: soundcloudResults[0].url,
+      title: soundcloudResults[0].title,
+    };
+  }
+
+  throw new Error('No song found for your query.');
 }
 
 client.on('ready', () => {
@@ -154,7 +166,15 @@ client.on('messageCreate', async (message) => {
       });
 
       const track = await resolveTrack(query);
-      const stream = await play.stream(track.url);
+
+      let stream;
+      if (track.source === 'youtube') {
+        stream = await play.stream_from_info(track.info, {
+          discordPlayerCompatibility: true,
+        });
+      } else {
+        stream = await play.stream(track.url);
+      }
 
       currentResource = createAudioResource(stream.stream, {
         inputType: stream.type,
